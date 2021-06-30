@@ -1,0 +1,71 @@
+#!/bin/sh
+#
+# PROVIDE: mcwatchdog
+# REQUIRE: LOGIN DAEMON NETWORKING mountcritlocal minecraft
+# KEYWORD: shutdown
+#
+# Add the following line to /etc/rc.conf.local to enable minecraft watchdog:
+#
+#  mcwatchdog="YES"
+#
+
+. /etc/rc.subr
+
+: ${mcwatchdog_enable:=NO}
+: ${mcwatchdog_interval:=60}
+: ${mcwatchdog_pidfile:=/var/run/mcwatchdog.pid}
+
+name=mcwatchdog
+rcvar=`set_rcvar`
+
+start_cmd="${name}_start"
+stop_cmd="${name}_stop"
+extra_commands="status"
+status_cmd="${name}_status"
+
+mcwatchdog_start()
+{
+	{ read PID REST_IGNORED < "$mcwatchdog_pidfile"; } 2> /dev/null
+	if [ "$PID" ] && [ "$( ps -o ucomm= -p $PID )" = "sh" ]; then
+		echo "$name already running (pid $PID)." >&2
+		exit 1
+	fi
+	nohup sh -c '
+	while :; do
+		case "$( service minecraft status )" in
+		*"not running"*) service minecraft start ;;
+		esac
+		sleep '"$mcwatchdog_interval"'
+	done' > /dev/null 2>&1 &
+	if echo $! > "$mcwatchdog_pidfile"; then
+		echo "$name started (pid $!)."
+	else
+		kill -9 $!
+	fi
+}
+
+mcwatchdog_stop()
+{
+	{ read PID REST_IGNORED < "$mcwatchdog_pidfile"; } 2> /dev/null
+	if [ ! "$PID" ] || [ "$( ps -o ucomm= -p $PID )" != "sh" ]; then
+		rm -f "$mcwatchdog_pidfile"
+		echo "$name not running." >&2
+		exit 1
+	fi
+	kill -9 $PID
+	echo "$name stopped."
+}
+
+mcwatchdog_status()
+{
+	{ read PID REST_IGNORED < "$mcwatchdog_pidfile"; } 2> /dev/null
+	if [ "$PID" ] && [ "$( ps -o ucomm= -p $PID )" = "sh" ]; then
+		echo "$name is running (pid $PID)."
+	else
+		rm -f "$mcwatchdog_pidfile"
+		echo "$name is not running."
+	fi
+}
+
+load_rc_config $name
+run_rc_command "$1"
